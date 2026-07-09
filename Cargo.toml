@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "query-lang"
-version = "0.1.0"
+version = "0.2.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -19,10 +19,10 @@ readme = "README.md"
 description = "Query-based incremental compilation framework."
 
 # Keywords (5 max)
-keywords = [compiler,language,incremental,query]
+keywords = ["compiler", "language", "incremental", "query", "memoization"]
 
 # Categories
-categories = [development-tools,compilers]
+categories = ["development-tools", "compilers", "caching"]
 
 # Links
 homepage      = "https://github.com/jamesgober/query-lang"
@@ -61,6 +61,8 @@ serde = { version = "1", optional = true, default-features = false, features = [
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest  = "1"
+# Exercises the `serde` feature's `Serialize` derivations in tests/serde.rs.
+serde_json = "1"
 
 [target.'cfg(loom)'.dev-dependencies]
 loom = "0.7"

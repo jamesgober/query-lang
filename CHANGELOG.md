@@ -21,6 +21,46 @@
 
 ---
 
+## [0.2.0] - 2026-07-08
+
+The core, and the hard part of the roadmap: the scaffold becomes a working
+incremental computation engine — a query database with automatic dependency
+tracking, revision-based invalidation, and early cutoff. The public surface is
+deliberately small (one trait, one database, three supporting types) and generic
+over the queries a consumer defines, so it binds to no concrete compiler and
+wires no first-party dependency.
+
+### Added
+
+- `System` — the trait a consumer implements to define its queries: a `Key` type,
+  a `Value` type, and a `compute` function. Reading dependencies through the
+  database handle is what the engine records as the dependency graph.
+- `Database<S>` — the engine. `new` builds it, `set` seeds inputs (advancing the
+  revision only on a real change), and `get` resolves a query, computing and
+  caching it as needed with automatic invalidation and early cutoff. Also exposes
+  `revision`, `stats`, and `system`.
+- `Revision` — the monotonic version clock that drives validation by integer
+  compare rather than value diffing.
+- `Stats` — cumulative counters (`computed`, `validated`, `hits`) for measuring
+  exactly what an operation cost, plus a `total`.
+- `QueryError` — the resolution error, with a `Cycle` variant for a query that
+  depends on itself; the graph unwinds cleanly instead of panicking or hanging.
+- Two runnable examples (`spreadsheet`, `build_pipeline`), Criterion benchmarks
+  for the hit / cold-build / recompute paths, property tests holding the engine
+  to its core invariants, and full `docs/API.md`.
+
+### Changed
+
+- Bumped the crate version to `0.2.0`.
+
+### Fixed
+
+- Corrected invalid TOML in `Cargo.toml` (`keywords` and `categories` were
+  unquoted) that prevented the manifest from parsing.
+- Aligned the `clippy.toml` MSRV (`1.87` → `1.85`) with `Cargo.toml`.
+
+---
+
 ## [0.1.0] - 2026-06-18
 
 Initial scaffold and repository bootstrap. No domain logic yet &mdash; this release establishes the structure, tooling, and quality gates the implementation will be built on.
@@ -34,5 +74,6 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/query-lang/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jamesgober/query-lang/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jamesgober/query-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/query-lang/releases/tag/v0.1.0
