@@ -1,9 +1,9 @@
 # query-lang &mdash; API Reference
 
 > Complete reference for every public item in `query-lang`, with examples.
-> **Status: pre-1.0.** The surface below is being designed across the 0.x series
-> and frozen at `1.0.0`; until then a minor release may refine it. See
-> [`../dev/ROADMAP.md`](../dev/ROADMAP.md).
+> **Status: stable (1.0).** The surface below is the `1.0` contract; it follows
+> [Semantic Versioning](#stability) and will not change in a breaking way before
+> `2.0`. See [`../dev/ROADMAP.md`](../dev/ROADMAP.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -28,7 +28,7 @@
 - [`Stats`](#stats)
 - [`QueryError`](#queryerror)
 - [Feature flags](#feature-flags)
-- [Versioning](#versioning)
+- [Stability](#stability)
 
 ---
 
@@ -59,7 +59,7 @@ and wires no first-party dependency.
 
 ```toml
 [dependencies]
-query-lang = "0.2"
+query-lang = "1"
 ```
 
 Or from the terminal:
@@ -778,10 +778,10 @@ assert_eq!(db.get(&5)?, 5);
 
 ```toml
 # no_std build:
-query-lang = { version = "0.2", default-features = false }
+query-lang = { version = "1", default-features = false }
 
 # with serde:
-query-lang = { version = "0.2", features = ["serde"] }
+query-lang = { version = "1", features = ["serde"] }
 ```
 
 Feature flags are additive: enabling one never removes or changes existing
@@ -789,11 +789,33 @@ behaviour.
 
 ---
 
-## Versioning
+## Stability
 
-query-lang follows [Semantic Versioning](https://semver.org/). The crate is
-pre-1.0: the surface documented here is being designed across the 0.x series and
-a minor release may still refine it. It will be frozen at `1.0.0`, after which no
-breaking change ships before `2.0`. See
-[`../dev/ROADMAP.md`](../dev/ROADMAP.md) and
+As of `1.0.0` the public API is frozen. query-lang follows
+[Semantic Versioning](https://semver.org/); within the `1.x` series:
+
+- The **surface** — [`System`](#system) (its associated types and `compute`),
+  [`Database`](#database) (`new` / `set` / `get` / `revision` / `stats` /
+  `system`), [`Revision`](#revision), [`Stats`](#stats), and
+  [`QueryError`](#queryerror) — will not change in a breaking way. A breaking
+  change means a new major version.
+- The **resolution semantics** are part of the contract, not an implementation
+  detail. A `set` with an unchanged value does not advance the revision or
+  invalidate dependents; a derived query is recomputed only on a real miss or a
+  changed dependency; and *early cutoff* holds — when a recomputed value equals
+  its predecessor, dependents are validated rather than recomputed. Code may rely
+  on these, and on [`Stats`](#stats) reflecting them.
+- `QueryError` is `#[non_exhaustive]`, so distinguishing a new resolution failure
+  in the future is an additive minor change. Match it with a wildcard arm.
+- The `serde` representations are fixed within `1.x`: a [`Revision`](#revision)
+  serializes as its underlying integer, and [`Stats`](#stats) as an object with
+  `computed` / `validated` / `hits` fields.
+- MSRV (Rust 1.85) is a compatibility surface: raising it is a documented minor
+  change, never a patch.
+
+What is **not** promised: the concrete `Revision` numbering (only its order and
+monotonicity are contractual), the internal cache representation, and the exact
+`Debug` output of a [`Database`](#database).
+
+See [`../dev/ROADMAP.md`](../dev/ROADMAP.md) and
 [`../CHANGELOG.md`](../CHANGELOG.md).

@@ -22,7 +22,12 @@ early cutoff), `Revision`, `Stats`, `QueryError`. No first-party dependency wire
 reasoning is recorded here under the anti-deferral rule. `no_std` on `alloc`,
 `#![forbid(unsafe_code)]`, keys in a `BTreeMap` (`Key: Ord`, no hashing dep).
 
-## v1.0.0 - API freeze
+## v1.0.0 - API freeze (DONE)
 Public surface stable and frozen until 2.0.
-- [ ] docs/API.md marked stable; SemVer promise recorded.
-- [ ] Full test + benchmark suite green on all three platforms.
+- [x] docs/API.md marked stable; SemVer promise recorded.
+- [x] Full test + benchmark suite green on all three platforms.
+
+Shipped 2026-07-11. No code changes from 0.2.0; the surface (`System`, `Database`,
+`Revision`, `Stats`, `QueryError`) is frozen, and the resolution semantics
+(unchanged-input no-op, early cutoff) plus the `serde` representations and MSRV
+1.85 are recorded as part of the contract in `docs/API.md#stability`.
