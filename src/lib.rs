@@ -82,7 +82,7 @@
 //! - `std` (default) — the standard library. Without it the crate is
 //!   `#![no_std]` and needs only `alloc`; the engine itself uses no operating-
 //!   system facilities either way.
-//! - `serde` — derives [`serde::Serialize`] for [`Revision`] and [`Stats`] so a
+//! - `serde` — derives `serde::Serialize` for [`Revision`] and [`Stats`] so a
 //!   database's version and cache metrics can be logged or inspected.
 //!
 //! ## Stability
