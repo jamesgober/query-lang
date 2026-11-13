@@ -14,9 +14,8 @@ use core::fmt;
 /// panic, the engine unwinds the whole chain with [`QueryError::Cycle`].
 ///
 /// The type is [`non_exhaustive`](https://doc.rust-lang.org/reference/attributes/type_system.html):
-/// resolution has exactly one failure mode today, and new engine-level failure
-/// modes can be added later without breaking a `match` that already handles
-/// `Cycle`.
+/// new engine-level failure modes can be added later without breaking a
+/// `match` that has a wildcard arm.
 ///
 /// # Examples
 ///
@@ -49,12 +48,21 @@ pub enum QueryError {
     /// usually by splitting the offending query so the two halves no longer wait
     /// on each other.
     Cycle,
+
+    /// Resolving a query needed more nested levels than the database allows.
+    ///
+    /// Returned only when a limit was set with
+    /// [`Database::with_max_depth`](crate::Database::with_max_depth). Each query
+    /// that is computing, or revalidating what it read, takes one level. The
+    /// usual cause is a long chain of queries that each read the next one.
+    TooDeep,
 }
 
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             QueryError::Cycle => f.write_str("query cycle detected: a query depends on itself"),
+            QueryError::TooDeep => f.write_str("query resolution exceeded the depth limit"),
         }
     }
 }
@@ -78,6 +86,14 @@ mod tests {
     fn test_error_trait_is_implemented() {
         fn assert_error<E: core::error::Error>(_: &E) {}
         assert_error(&QueryError::Cycle);
+    }
+
+    #[test]
+    fn test_too_deep_display_is_descriptive() {
+        assert_eq!(
+            QueryError::TooDeep.to_string(),
+            "query resolution exceeded the depth limit"
+        );
     }
 
     #[test]

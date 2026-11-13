@@ -121,8 +121,12 @@ pub struct Database<S: System> {
     /// Dependency-collection stack. Each active `compute` pushes a frame; every
     /// [`get`](Self::get) call appends the key it read to the top frame.
     frames: RefCell<Vec<Vec<S::Key>>>,
-    /// The keys whose `compute` is currently in progress, for cycle detection.
+    /// The keys currently being resolved, for cycle detection and the depth
+    /// limit. A key is on this stack while its `compute` runs and while its
+    /// recorded dependencies are being revalidated.
     active: RefCell<Vec<S::Key>>,
+    /// The most keys that may be on the `active` stack at once, if limited.
+    max_depth: Option<usize>,
     computed: Cell<u64>,
     validated: Cell<u64>,
     hits: Cell<u64>,
@@ -159,10 +163,54 @@ impl<S: System> Database<S> {
             memos: RefCell::new(BTreeMap::new()),
             frames: RefCell::new(Vec::new()),
             active: RefCell::new(Vec::new()),
+            max_depth: None,
             computed: Cell::new(0),
             validated: Cell::new(0),
             hits: Cell::new(0),
         }
+    }
+
+    /// Limit how deep one resolution may go, and return the database.
+    ///
+    /// Every query that is computing or revalidating its dependencies takes one
+    /// level, and each level uses some native stack. A long chain of queries
+    /// that each read the next one can therefore overflow the thread's stack.
+    /// With a limit set, a [`get`](Self::get) that would go deeper than `depth`
+    /// levels returns [`QueryError::TooDeep`] instead. The database stays usable
+    /// afterwards.
+    ///
+    /// There is no limit by default. Pick one that fits the stack of the thread
+    /// that drives the database and the stack your `compute` uses per call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use query_lang::{Database, System, QueryError};
+    ///
+    /// struct Chain;
+    /// impl System for Chain {
+    ///     type Key = u32;
+    ///     type Value = u32;
+    ///     fn compute(&self, db: &Database<Self>, k: &u32) -> Result<u32, QueryError> {
+    ///         if *k == 0 { Ok(0) } else { Ok(db.get(&(k - 1))? + 1) }
+    ///     }
+    /// }
+    ///
+    /// let db = Database::new(Chain).with_max_depth(200);
+    /// assert_eq!(db.get(&100), Ok(100));
+    /// assert_eq!(db.get(&5_000), Err(QueryError::TooDeep));
+    /// ```
+    #[must_use]
+    pub fn with_max_depth(mut self, depth: usize) -> Self {
+        self.max_depth = Some(depth);
+        self
+    }
+
+    /// The depth limit set with [`with_max_depth`](Self::with_max_depth), if any.
+    #[must_use]
+    #[inline]
+    pub const fn max_depth(&self) -> Option<usize> {
+        self.max_depth
     }
 
     /// Set an input to a value, advancing the revision if the value changed.
@@ -358,14 +406,28 @@ impl<S: System> Database<S> {
             .map(|m| (m.deps.clone(), m.verified_at, m.value.clone(), m.changed_at));
 
         if let Some((deps, verified_at, value, changed_at)) = snapshot {
-            let mut inputs_changed = false;
-            for dep in &deps {
-                let (_dep_value, dep_changed_at) = self.eval(dep)?;
-                if dep_changed_at > verified_at {
-                    inputs_changed = true;
-                    break;
+            // The key stays on the active stack while its dependencies are
+            // checked. Memos can record dependencies that form a cycle (a query
+            // that caught a `Cycle` error from a dependency and fell back to a
+            // default), and without this mark revalidating them would recurse
+            // forever.
+            let inputs_changed = {
+                let _active = self.enter(key)?;
+                let mut changed = false;
+                for dep in &deps {
+                    match self.eval(dep) {
+                        Ok((_dep_value, dep_changed_at)) if dep_changed_at <= verified_at => {}
+                        // A dependency that changed, or that now fails, means the
+                        // cached value cannot be trusted: run `compute` again and
+                        // let it decide how to handle the failure.
+                        Ok(_) | Err(_) => {
+                            changed = true;
+                            break;
+                        }
+                    }
                 }
-            }
+                changed
+            };
             if !inputs_changed {
                 // Early cutoff: nothing this query read actually changed. Reuse
                 // the cached value; only its verification stamp moves forward.
@@ -390,20 +452,22 @@ impl<S: System> Database<S> {
         key: &S::Key,
         previous: Option<(S::Value, Revision)>,
     ) -> Result<(S::Value, Revision), QueryError> {
-        // Cycle detection: re-entering a key already on the active stack means
-        // the query graph is cyclic.
-        if self.active.borrow().iter().any(|active| active == key) {
-            return Err(QueryError::Cycle);
-        }
-
-        self.active.borrow_mut().push(key.clone());
-        self.frames.borrow_mut().push(Vec::new());
-
-        let result = self.system.compute(self, key);
-
-        // Unwind the bookkeeping stacks whether compute succeeded or failed.
-        let deps = self.frames.borrow_mut().pop().unwrap_or_default();
-        self.active.borrow_mut().pop();
+        // Cycle detection and the depth limit: `enter` refuses a key already on
+        // the active stack. The guards unwind both bookkeeping stacks whether
+        // `compute` succeeds, fails, or panics.
+        let (result, deps) = {
+            let _active = self.enter(key)?;
+            self.frames.borrow_mut().push(Vec::new());
+            let _frame = FrameGuard(&self.frames);
+            let result = self.system.compute(self, key);
+            let deps = self
+                .frames
+                .borrow_mut()
+                .last_mut()
+                .map(core::mem::take)
+                .unwrap_or_default();
+            (result, deps)
+        };
 
         let value = result?;
 
@@ -424,6 +488,41 @@ impl<S: System> Database<S> {
         self.memos.borrow_mut().insert(key.clone(), memo);
 
         Ok((value, changed_at))
+    }
+}
+
+impl<S: System> Database<S> {
+    /// Put `key` on the active stack, or fail if it is already there (a cycle)
+    /// or the stack is at the depth limit. The returned guard pops it again,
+    /// also when `compute` panics.
+    fn enter(&self, key: &S::Key) -> Result<ActiveGuard<'_, S::Key>, QueryError> {
+        let mut active = self.active.borrow_mut();
+        if active.iter().any(|k| k == key) {
+            return Err(QueryError::Cycle);
+        }
+        if self.max_depth.is_some_and(|max| active.len() >= max) {
+            return Err(QueryError::TooDeep);
+        }
+        active.push(key.clone());
+        Ok(ActiveGuard(&self.active))
+    }
+}
+
+/// Pops the active stack when dropped.
+struct ActiveGuard<'a, K>(&'a RefCell<Vec<K>>);
+
+impl<K> Drop for ActiveGuard<'_, K> {
+    fn drop(&mut self) {
+        self.0.borrow_mut().pop();
+    }
+}
+
+/// Pops the dependency-frame stack when dropped.
+struct FrameGuard<'a, K>(&'a RefCell<Vec<Vec<K>>>);
+
+impl<K> Drop for FrameGuard<'_, K> {
+    fn drop(&mut self) {
+        self.0.borrow_mut().pop();
     }
 }
 
