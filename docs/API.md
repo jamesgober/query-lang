@@ -19,6 +19,7 @@
   - [`System::compute`](#systemcompute)
 - [`Database`](#database)
   - [`Database::new`](#databasenew)
+  - [`Database::with_max_depth`](#databasewith_max_depth)
   - [`Database::set`](#databaseset)
   - [`Database::get`](#databaseget)
   - [`Database::revision`](#databaserevision)
@@ -48,7 +49,7 @@ Four public types and one trait make up the whole surface:
 | [`Database`](#database) | The engine: stores inputs, caches results, tracks dependencies. |
 | [`Revision`](#revision) | The version clock that drives validation. |
 | [`Stats`](#stats) | Cumulative counters for how the engine spent its work. |
-| [`QueryError`](#queryerror) | The error a resolution returns (a query cycle). |
+| [`QueryError`](#queryerror) | The error a resolution returns (a query cycle, or a depth limit reached). |
 
 The crate is `#![forbid(unsafe_code)]`, `no_std`-compatible (needs only `alloc`),
 and wires no first-party dependency.
@@ -356,6 +357,39 @@ impl System for S {
 let db = Database::new(S);
 assert_eq!(db.revision().as_u64(), 0);
 assert_eq!(db.stats().total(), 0);
+```
+
+### `Database::with_max_depth`
+
+```rust,ignore
+pub fn with_max_depth(self, depth: usize) -> Self
+pub const fn max_depth(&self) -> Option<usize>
+```
+
+Limit how deep one resolution may go. Each query that is computing, or
+revalidating what it read, takes one level of native stack. A long chain of
+queries that each read the next one can overflow the thread's stack, so with a
+limit set, a `get` that would go deeper returns `QueryError::TooDeep` instead.
+The database stays usable afterwards. There is no limit by default; pick one
+that fits the stack of the thread that drives the database. `max_depth` returns
+the limit, or `None`.
+
+```rust
+use query_lang::{Database, System, QueryError};
+
+struct Chain;
+impl System for Chain {
+    type Key = u32;
+    type Value = u32;
+    fn compute(&self, db: &Database<Self>, k: &u32) -> Result<u32, QueryError> {
+        if *k == 0 { Ok(0) } else { Ok(db.get(&(k - 1))? + 1) }
+    }
+}
+
+let db = Database::new(Chain).with_max_depth(200);
+assert_eq!(db.max_depth(), Some(200));
+assert_eq!(db.get(&100), Ok(100));
+assert_eq!(db.get(&5_000), Err(QueryError::TooDeep));
 ```
 
 ### `Database::set`
@@ -709,6 +743,7 @@ assert!(db.stats().validated >= 1);
 #[non_exhaustive]
 pub enum QueryError {
     Cycle,
+    TooDeep,
 }
 ```
 
@@ -719,9 +754,17 @@ or through a chain — for a result still being computed, there is no value to
 return. Rather than recurse without bound or panic, the engine unwinds the whole
 chain with `QueryError::Cycle`.
 
-The type is `#[non_exhaustive]`: resolution has one failure mode today, and a
-`match` that handles `Cycle` plus a wildcard stays correct if a variant is added
-later. `QueryError` implements `Copy`, `Eq`, `Display`, and `core::error::Error`.
+A query may catch `Cycle` from a dependency and fall back to a default. The
+engine records that read like any other, and later revalidation still ends in a
+value or an error: a query is marked as in progress while its recorded
+dependencies are checked, and a dependency that now fails makes the query run
+`compute` again.
+
+`QueryError::TooDeep` is returned only when a depth limit was set with
+[`with_max_depth`](#databasewith_max_depth) and a resolution would go deeper.
+
+The type is `#[non_exhaustive]`: a `match` with a wildcard arm stays correct if
+a variant is added later. `QueryError` implements `Copy`, `Eq`, `Display`, and `core::error::Error`.
 
 ```rust
 use query_lang::{Database, System, QueryError};
@@ -760,7 +803,7 @@ impl System for S {
 let db = Database::new(S);
 let shown = match db.get(&0) {
     Ok(v) => v,
-    Err(_) => -1, // the only resolution error is a cycle
+    Err(_) => -1, // here the only possible error is a cycle
 };
 assert_eq!(shown, -1);
 assert_eq!(db.get(&5)?, 5);
@@ -795,8 +838,8 @@ As of `1.0.0` the public API is frozen. query-lang follows
 [Semantic Versioning](https://semver.org/); within the `1.x` series:
 
 - The **surface** — [`System`](#system) (its associated types and `compute`),
-  [`Database`](#database) (`new` / `set` / `get` / `revision` / `stats` /
-  `system`), [`Revision`](#revision), [`Stats`](#stats), and
+  [`Database`](#database) (`new` / `with_max_depth` / `max_depth` / `set` /
+  `get` / `revision` / `stats` / `system`), [`Revision`](#revision), [`Stats`](#stats), and
   [`QueryError`](#queryerror) — will not change in a breaking way. A breaking
   change means a new major version.
 - The **resolution semantics** are part of the contract, not an implementation

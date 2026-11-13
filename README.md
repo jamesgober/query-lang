@@ -193,7 +193,8 @@ Criterion writes per-benchmark reports to `target/criterion/`. Numbers vary by C
 - **Dependencies are recorded, not declared.** A query's dependency set is whatever it *read* on its last run, so a query that branches on its inputs is tracked exactly — it depends on the branch it actually took, and nothing more.
 - **Revisions, not value diffs, drive validation.** Validity is a single integer compare regardless of how large a cached value is; values are compared only once, at the point a query recomputes, to decide early cutoff.
 - **Single-threaded by design.** Resolution walks a shared cache and a dependency stack through interior mutability — correct and allocation-light on one thread, with no atomic overhead. Run independent databases on separate threads for parallelism.
-- **Cycles are an error, never a panic or a hang.** A query that depends on itself resolves to `QueryError::Cycle`; the resolution chain unwinds cleanly and the database stays usable.
+- **Cycles are an error, never a panic or a hang.** A query that depends on itself resolves to `QueryError::Cycle`; the resolution chain unwinds cleanly and the database stays usable. A query that catches the error and falls back to a default is revalidated correctly later.
+- **Depth costs stack.** Resolution recurses once per level of a dependency chain, so a very long chain can overflow the thread's stack. `Database::with_max_depth` turns that into `QueryError::TooDeep`.
 - **`no_std` and dependency-free.** The engine uses only `alloc` and wires no first-party crate — keys live in a `BTreeMap`, so the requirement is `Key: Ord` rather than a hashing dependency.
 
 <hr>

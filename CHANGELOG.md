@@ -11,13 +11,30 @@
 
 ## [Unreleased]
 
+---
+
+## [1.1.0] - 2026-11-12
+
 ### Added
 
-### Changed
+- `Database::with_max_depth` and `Database::max_depth`. With a limit set, a
+  resolution that would nest deeper than the limit returns the new
+  `QueryError::TooDeep` instead of overflowing the thread's stack. There is no
+  limit by default.
+- `QueryError::TooDeep`. `QueryError` was already `#[non_exhaustive]`.
 
 ### Fixed
 
-### Security
+- A query that caught a `Cycle` error from a dependency and fell back to a
+  default left two memos that depended on each other. After the next `set`,
+  revalidating either one recursed until the stack overflowed. A query is now
+  marked as in progress while its dependencies are revalidated, so the loop ends
+  in `Cycle`, and a dependency that now fails makes the query run `compute`
+  again instead of passing the error up. The values match what a fresh database
+  computes.
+- A panic inside `compute` left the query on the internal in-progress stack, so
+  if the caller caught the panic, every later `get` of that query reported a
+  false `Cycle`. The bookkeeping is now unwound on panic as well.
 
 ---
 
@@ -91,7 +108,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/query-lang/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jamesgober/query-lang/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jamesgober/query-lang/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jamesgober/query-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/query-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/query-lang/releases/tag/v0.1.0
